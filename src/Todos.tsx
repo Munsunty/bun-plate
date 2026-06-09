@@ -1,16 +1,20 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { client } from "./client/client";
 import type { Todo } from "./db/todos.repo";
 
 /**
- * Demo of the full type-safe stack: Eden client → Elysia route → bun:sqlite.
- * Every call below is checked against the server's `Api` type — rename a route
- * or change a schema and this file fails to compile.
+ * Interactive island: Eden client → Elysia route → bun:sqlite. Every call is
+ * checked against the server's `Api` type.
+ *
+ * SSR data handoff (design §3/§4): the depth-0 list is rendered server-side and
+ * supplied to the inner root at hydrate time via `initial`. Seeding state from
+ * it (instead of fetching on mount) makes the first client render byte-match the
+ * SSR markup → no hydration mismatch, no flicker. Mutations re-fetch normally.
  */
-export function Todos() {
-  const [todos, setTodos] = useState<Todo[]>([]);
+export function Todos({ initial = [] }: { initial?: Todo[] }) {
+  const [todos, setTodos] = useState<Todo[]>(initial);
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -20,10 +24,6 @@ export function Todos() {
     setTodos(data);
     setError(null);
   };
-
-  useEffect(() => {
-    void load();
-  }, []);
 
   const add = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();

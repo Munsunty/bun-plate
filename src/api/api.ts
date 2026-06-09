@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { imageRoutes } from "./routes/image";
 import { todosRoutes } from "./routes/todos";
 
 /**
@@ -8,7 +9,8 @@ import { todosRoutes } from "./routes/todos";
  */
 const api = new Elysia({ prefix: "/api" })
   .get("/", () => ({ message: "Hello from Bun + Elysia" }))
-  .use(todosRoutes);
+  .use(todosRoutes)
+  .use(imageRoutes);
 
 export default api;
 

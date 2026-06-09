@@ -20,6 +20,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.sqlite-shm
 *.sqlite-wal
 
+# on-the-fly image transform cache
+.cache
+
 # dotenv environment variable files
 .env
 .env.development.local

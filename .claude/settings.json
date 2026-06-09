@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun build.ts)",
+      "Bash(curl -s http://localhost:3000/about -o /tmp/about.html)",
+      "Read(//tmp/**)",
+      "Bash(curl -s http://localhost:3000/todos -o /tmp/todos.html)"
+    ]
+  }
+}
