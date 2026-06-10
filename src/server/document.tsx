@@ -8,7 +8,7 @@ import type { Manifest } from "./manifest";
  *   - `<link rel="stylesheet">` in <head> (render-blocking → styled first paint, no FOUC)
  *   - `<script type="module">` for the page's client entry, before </body>
  *
- * Static pages (no `clientEntry`) get no module script → zero client JS.
+ * Static pages (not `interactive`) get no module script → zero client JS.
  */
 
 const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -36,9 +36,14 @@ export function documentHead({ manifest, title }: DocumentParts): string {
   );
 }
 
-/** Closes `#root`, injects the page's client entry module (if any), closes doc. */
-export function documentTail(manifest: Manifest, clientEntry?: string): string {
-  const entry = clientEntry ? manifest.entries[clientEntry] : undefined;
+/**
+ * Closes `#root` and the document. Interactive pages (any islands) get the
+ * single `boot` module, which scans `[data-island]` markers and hydrates them;
+ * island data rides inline as `data-props`, so no separate data payload here.
+ * Static pages get no script at all (design principle 2).
+ */
+export function documentTail(manifest: Manifest, interactive?: boolean): string {
+  const entry = interactive ? manifest.entries["boot"] : undefined;
   const script = entry ? `<script type="module" src="${escapeAttr(entry.js)}"></script>` : "";
   return `</div>${script}</body></html>`;
 }

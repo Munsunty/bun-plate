@@ -13,8 +13,10 @@ import type { Todo } from "./db/todos.repo";
  * it (instead of fetching on mount) makes the first client render byte-match the
  * SSR markup → no hydration mismatch, no flicker. Mutations re-fetch normally.
  */
-export function Todos({ initial = [] }: { initial?: Todo[] }) {
-  const [todos, setTodos] = useState<Todo[]>(initial);
+export function Todos({ initial }: { initial?: Todo[] | null }) {
+  // `?? []` (not a default param): a default only fires for `undefined`, but the
+  // hydrate path can hand us `null` when the depth-0 data is missing.
+  const [todos, setTodos] = useState<Todo[]>(initial ?? []);
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
 

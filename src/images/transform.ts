@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, rename, stat } from "node:fs/promises";
+import { mkdir, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
 
 /**
  * On-the-fly image transform + disk cache, built on `Bun.Image`.
@@ -45,6 +45,9 @@ const CACHE_DIR = path.resolve(process.env.IMAGE_CACHE_DIR ?? ".cache/images");
 const MAX_DIM = 4096; // output dimension bound
 const MAX_PIXELS = 268402689; // decode-bomb guard (Sharp default: 0x3FFF²)
 const DEFAULT_QUALITY = 80;
+// Cache bound: every distinct w/h/q/format combination is a new cache file and
+// the params are caller-controlled, so without a cap the cache grows forever.
+const MAX_CACHE_BYTES = Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 256 * 1024 * 1024);
 
 const CONTENT_TYPE: Record<ImageFormat, string> = {
   webp: "image/webp",
@@ -53,15 +56,31 @@ const CONTENT_TYPE: Record<ImageFormat, string> = {
   avif: "image/avif",
 };
 
+// 1×1 transparent PNG used to probe encoder capability.
+const PROBE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+let avifProbe: Promise<boolean> | null = null;
+
 /**
  * Can this machine ENCODE the format? webp/png/jpeg ship as static codecs
- * (every platform). avif/heic need the OS encoder (macOS/Windows, system
- * backend) — on Linux/WSL they reject, so we transparently fall back to webp.
+ * (every platform). avif needs an OS encoder whose presence varies even within
+ * a platform, so we probe with a real 1×1 encode (once, cached) instead of
+ * guessing from `process.platform` — a wrong guess turns the documented
+ * transparent-webp fallback into a 415.
  */
-function canEncode(format: ImageFormat): boolean {
+async function canEncode(format: ImageFormat): Promise<boolean> {
   if (format === "webp" || format === "png" || format === "jpeg") return true;
-  if (Bun.Image.backend === "bun") return false;
-  return process.platform === "darwin" || process.platform === "win32";
+  avifProbe ??= new Bun.Image(PROBE_PNG)
+    .avif({ quality: 50 })
+    .bytes()
+    .then(
+      () => true,
+      () => false,
+    );
+  return avifProbe;
 }
 
 interface NormalizedOps {
@@ -109,8 +128,21 @@ export async function planTransform(params: TransformParams): Promise<ImagePlan>
   if (!src || src.includes("\0") || src.includes("..") || path.isAbsolute(src)) {
     throw new ImageError(400, "Invalid src");
   }
-  const srcAbs = path.resolve(SOURCE_DIR, src);
-  if (srcAbs !== SOURCE_DIR && !srcAbs.startsWith(SOURCE_DIR + path.sep)) {
+  const lexical = path.resolve(SOURCE_DIR, src);
+  if (lexical !== SOURCE_DIR && !lexical.startsWith(SOURCE_DIR + path.sep)) {
+    throw new ImageError(400, "src escapes the source directory");
+  }
+
+  // The lexical check above doesn't see symlinks, but stat/decode FOLLOW them —
+  // a link inside the source dir could point anywhere. Contain the real path.
+  let srcAbs: string;
+  let rootReal: string;
+  try {
+    [srcAbs, rootReal] = await Promise.all([realpath(lexical), realpath(SOURCE_DIR)]);
+  } catch {
+    throw new ImageError(404, "Source image not found");
+  }
+  if (srcAbs !== rootReal && !srcAbs.startsWith(rootReal + path.sep)) {
     throw new ImageError(400, "src escapes the source directory");
   }
 
@@ -135,7 +167,7 @@ export async function planTransform(params: TransformParams): Promise<ImagePlan>
 
   const requested: ImageFormat = params.format ?? "webp";
   if (!(requested in CONTENT_TYPE)) throw new ImageError(400, "Unsupported format");
-  const format = canEncode(requested) ? requested : "webp"; // transparent fallback
+  const format = (await canEncode(requested)) ? requested : "webp"; // transparent fallback
 
   const keySource = JSON.stringify({
     src,
@@ -159,14 +191,27 @@ export async function planTransform(params: TransformParams): Promise<ImagePlan>
   };
 }
 
+const inflight = new Map<string, Promise<void>>();
+
 /**
  * Encode the variant to the cache if it isn't there yet. Idempotent and safe to
- * call concurrently — writes go to a temp file and `rename` in atomically, so a
- * reader never sees a half-written image.
+ * call concurrently — concurrent requests for the same variant share one encode
+ * (N identical requests must cost one decode+encode, not N), and writes go to a
+ * temp file and `rename` in atomically, so a reader never sees a half-written
+ * image. After a write the cache is bounded via best-effort LRU eviction.
  */
 export async function ensureCached(plan: ImagePlan): Promise<void> {
   if (await Bun.file(plan.cachePath).exists()) return;
 
+  let job = inflight.get(plan.cachePath);
+  if (!job) {
+    job = encodeToCache(plan).finally(() => inflight.delete(plan.cachePath));
+    inflight.set(plan.cachePath, job);
+  }
+  return job;
+}
+
+async function encodeToCache(plan: ImagePlan): Promise<void> {
   const { width, height, fit, quality } = plan.ops;
   let img = new Bun.Image(Bun.file(plan.srcAbs), { maxPixels: MAX_PIXELS });
 
@@ -218,4 +263,46 @@ export async function ensureCached(plan: ImagePlan): Promise<void> {
   const tmp = path.join(CACHE_DIR, `.${crypto.randomUUID()}.tmp`);
   await Bun.write(tmp, bytes);
   await rename(tmp, plan.cachePath);
+
+  void evictIfOver().catch(() => {});
+}
+
+let evicting = false;
+
+/**
+ * Keep the cache directory under `MAX_CACHE_BYTES` by deleting oldest-mtime
+ * files first. Best-effort and off the request path — losing a cached variant
+ * only costs a re-encode on the next request.
+ */
+async function evictIfOver(): Promise<void> {
+  if (evicting) return;
+  evicting = true;
+  try {
+    const files: { p: string; size: number; mtime: number }[] = [];
+    let total = 0;
+    for (const name of await readdir(CACHE_DIR)) {
+      const p = path.join(CACHE_DIR, name);
+      try {
+        const s = await stat(p);
+        if (!s.isFile()) continue;
+        files.push({ p, size: s.size, mtime: s.mtimeMs });
+        total += s.size;
+      } catch {
+        // raced with a concurrent delete — skip
+      }
+    }
+    if (total <= MAX_CACHE_BYTES) return;
+    files.sort((a, b) => a.mtime - b.mtime);
+    for (const f of files) {
+      if (total <= MAX_CACHE_BYTES) break;
+      try {
+        await unlink(f.p);
+        total -= f.size;
+      } catch {
+        // already gone — fine
+      }
+    }
+  } finally {
+    evicting = false;
+  }
 }

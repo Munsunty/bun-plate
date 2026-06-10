@@ -4,7 +4,10 @@
       "Bash(bun build.ts)",
       "Bash(curl -s http://localhost:3000/about -o /tmp/about.html)",
       "Read(//tmp/**)",
-      "Bash(curl -s http://localhost:3000/todos -o /tmp/todos.html)"
+      "Bash(curl -s http://localhost:3000/todos -o /tmp/todos.html)",
+      "Bash(git -C /home/nova/project/bun-plate diff --stat)",
+      "Bash(git -C /home/nova/project/bun-plate show HEAD:src/server/screen-cache.ts)",
+      "Bash(git -C /home/nova/project/bun-plate diff src/images/transform.ts)"
     ]
   }
 }

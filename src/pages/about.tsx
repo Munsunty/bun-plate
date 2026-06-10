@@ -1,11 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
- * Static page (design §1). No interactive islands, no `clientEntry` in
- * `src/routes.ts`, and NOT listed in `src/client/pages.ts` — so its JS is never
- * bundled to the browser. SSR HTML only; zero client JS; reached via a "heavy"
- * (full browser-navigation) transition. This is imported ONLY by the server
- * registry (`src/server/pages.ts`).
+ * Static page (design §1). No islands and not `interactive` in `src/routes.ts`,
+ * so its document carries no script at all. SSR HTML only; zero client JS;
+ * reached via a "heavy" (full browser-navigation) transition. Imported ONLY by
+ * the server registry (`src/server/pages.ts`).
  */
 export default function About() {
   return (
@@ -20,9 +19,9 @@ export default function About() {
             It is not hydrated and carries no client bundle.
           </p>
           <p>
-            Architecture: per-page SSR (<code>renderToReadableStream</code>) + a persistent shell
-            root with a swappable inner content root + a one-shot screen-key cache for the SSR→CSR
-            data handoff. No RSC, no Next.js, no react-router.
+            Architecture: per-page SSR (<code>renderToReadableStream</code>) with a server-owned
+            shell + React islands for interactive widgets + server-fragment swaps for light
+            transitions. No RSC, no Next.js, no react-router.
           </p>
           <p>
             <a href="/" className="underline">← Back home</a>

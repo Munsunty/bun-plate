@@ -1,20 +1,18 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { APITester } from "../APITester";
 import { Todos } from "../Todos";
+import { Island } from "../server/island";
 import type { Todo } from "../db/todos.repo";
 
 /**
- * Home page body — rendered inside the inner `#render` root. Shared by SSR
- * (`src/server/pages.ts`) and the client entry (`src/client/entries/home.tsx`),
- * so the markup is identical on both sides. Receives depth-0 data as a prop; it
- * must NOT import server-only modules (db/services) — data arrives via `data`.
+ * Home page body — SERVER-ONLY (design §1): rendered inside `#render` by SSR
+ * (full page or fragment) and never shipped to the client. Static parts are
+ * plain HTML; interactive widgets are wrapped in `<Island>` markers, which is
+ * the only part client React hydrates. Depth-0 data arrives as a prop and is
+ * passed straight into island props (design §3, one-way handoff).
  *
  * Logos are referenced by URL (served statically) rather than imported, so this
  * module renders safely under the `bun` runtime during SSR.
- *
- * `data` IS the depth-0 API response (`GET /api/todos` → `Todo[]`): the value the
- * SSR draws, caches under the screen key, and the client re-fetches on hydrate.
- * Keeping page data == API response is what makes the no-flicker handoff exact.
  */
 export default function Home({ data }: { data: Todo[] }) {
   return (
@@ -39,7 +37,7 @@ export default function Home({ data }: { data: Todo[] }) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <APITester />
+          <Island name="api-tester" props={{}} of={APITester} />
         </CardContent>
       </Card>
 
@@ -51,7 +49,7 @@ export default function Home({ data }: { data: Todo[] }) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Todos initial={data} />
+          <Island name="todos" props={{ initial: data }} of={Todos} />
         </CardContent>
       </Card>
     </div>

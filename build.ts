@@ -5,12 +5,12 @@ import path from "node:path";
 /**
  * Client bundle + asset manifest builder.
  *
- * Replaces the old HTML-import build: instead of scanning `*.html`, we build the
- * per-page client entries (`src/client/entries/*.tsx`) and a shared CSS entry
- * (`src/index.css`, processed by Tailwind). Outputs are content-hashed; a
- * `dist/manifest.json` maps each entry name → its hashed JS URL, plus the shared
- * CSS URL. The SSR document renderer reads that manifest to inject the right
- * `<script>`/`<link>` tags — the wiring Bun's HTML import used to do for us.
+ * Builds the single client `boot` entry (island scanner + transitions; widget
+ * components become on-demand chunks via their dynamic imports) and a shared
+ * CSS entry (`src/index.css`, processed by Tailwind). Outputs are
+ * content-hashed; `dist/manifest.json` maps entry name → hashed JS URL, plus
+ * the shared CSS URL. The SSR document renderer reads that manifest to inject
+ * the right `<script>`/`<link>` tags.
  *
  *   bun run build            # production (minified), runs buildClient() below
  *   index.ts (dev)           # imports buildClient() at startup + on file change
@@ -19,8 +19,7 @@ import path from "node:path";
 const outdir = path.join(process.cwd(), "dist");
 
 const ENTRYPOINTS = [
-  "src/client/entries/home.tsx",
-  "src/client/entries/todos.tsx",
+  "src/client/boot.ts",
   "src/index.css",
 ];
 
@@ -32,12 +31,20 @@ export async function buildClient(): Promise<boolean> {
     entrypoints: ENTRYPOINTS,
     outdir,
     // Hash everything → safe immutable caching at the `/assets/*` route.
-    naming: "assets/[name]-[hash].[ext]",
+    // Object form: a string only names ENTRYPOINTS — splitting's shared chunks
+    // would land at dist/ root, outside the served `/assets/*` prefix (404s).
+    naming: {
+      entry: "assets/[name]-[hash].[ext]",
+      chunk: "assets/chunk-[hash].[ext]",
+      asset: "assets/[name]-[hash].[ext]",
+    },
     plugins: [tailwind],
     splitting: true,
     minify: isProd,
     target: "browser",
-    sourcemap: "linked",
+    // Linked sourcemaps in prod would publish the original source — `serveAsset`
+    // serves anything under dist/, including `.js.map`, with immutable caching.
+    sourcemap: isProd ? "none" : "linked",
     define: {
       "process.env.NODE_ENV": JSON.stringify(isProd ? "production" : "development"),
     },

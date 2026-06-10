@@ -4,7 +4,7 @@ import { watch } from "node:fs";
 import api from "./api/api";
 import { migrate } from "./db/migrate";
 import { renderPage } from "./server/render";
-import { invalidateManifest } from "./server/manifest";
+import { getManifest, invalidateManifest } from "./server/manifest";
 import { buildClient } from "../build";
 
 // Apply any pending migrations before accepting traffic (idempotent).
@@ -31,6 +31,14 @@ if (isDev) {
       }, 120);
     });
   }
+} else {
+  // Prod must not silently serve unstyled, non-hydratable pages: refuse to boot
+  // without a usable manifest. (`bun start` builds first; this catches the rest.)
+  const manifest = await getManifest();
+  if (!manifest.css && Object.keys(manifest.entries).length === 0) {
+    console.error("✗ dist/manifest.json missing or empty — run `bun run build` before starting in production.");
+    process.exit(1);
+  }
 }
 
 /** Serve a hashed, immutable build artifact from `dist/`. */
@@ -47,6 +55,7 @@ async function serveAsset(req: Request): Promise<Response> {
 const svg = (name: string) => () => new Response(Bun.file(path.join(process.cwd(), "src", name)));
 
 const server = serve({
+  port: 9392,
   routes: {
     // Type-safe Elysia API (owns all routing under `/api`).
     "/api": api.fetch,

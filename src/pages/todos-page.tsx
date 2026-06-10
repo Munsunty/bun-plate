@@ -1,11 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Todos } from "../Todos";
+import { Island } from "../server/island";
 import type { Todo } from "../db/todos.repo";
 
 /**
  * Dedicated todos page — a second "light" route so light transitions can be
- * exercised (swap `/` ↔ `/todos` without a full reload). `data` is the depth-0
- * API response (`Todo[]`), same as Home.
+ * exercised (swap `/` ↔ `/todos` without a full reload). Server-only; the Todos
+ * widget hydrates via its island marker.
  */
 export default function TodosPage({ data }: { data: Todo[] }) {
   return (
@@ -15,7 +16,7 @@ export default function TodosPage({ data }: { data: Todo[] }) {
           <CardTitle className="text-2xl font-bold">All Todos</CardTitle>
         </CardHeader>
         <CardContent>
-          <Todos initial={data} />
+          <Island name="todos" props={{ initial: data }} of={Todos} />
         </CardContent>
       </Card>
     </div>

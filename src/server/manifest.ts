@@ -29,10 +29,17 @@ export async function getManifest(): Promise<Manifest> {
   if (cached && !isDev) return cached;
   const file = Bun.file(MANIFEST_PATH);
   if (!(await file.exists())) {
-    if (isDev) console.warn("⚠ dist/manifest.json missing — run a client build (no hydration until then).");
+    console.warn("⚠ dist/manifest.json missing — run a client build (no hydration until then).");
     return EMPTY;
   }
-  cached = (await file.json()) as Manifest;
+  // A truncated/corrupt manifest (interrupted build, partial deploy) must not
+  // 500 every render — degrade to no-assets and log loudly until it's rebuilt.
+  try {
+    cached = (await file.json()) as Manifest;
+  } catch (error) {
+    console.error("⚠ dist/manifest.json unreadable — serving pages without assets:", error);
+    return EMPTY;
+  }
   return cached;
 }
 
