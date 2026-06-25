@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Check, Loader, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 /**
  * Chat island (client-only behavior). SSR renders the empty shell; `localStorage`,
@@ -9,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
  *
  * Talks to `POST /api/agent/chat` with `fetch` and parses the SSE stream by hand
  * (the Eden treaty client can't consume `text/event-stream`). Each send appends one
- * user bubble + one agent bubble; agent text accumulates and tool calls show inline.
+ * user bubble + one agent turn; agent text accumulates and tool calls show inline.
  */
 
 interface ToolEntry {
@@ -34,6 +36,12 @@ interface Msg {
 
 const SESSION_KEY = "agent-session";
 
+const EXAMPLES = [
+  "Summarize the agent/ architecture in 5 bullets",
+  "List the files in src/api and what each does",
+  "Read agent/runtime.ts and explain it",
+];
+
 function loadSessionId(): string {
   let id = localStorage.getItem(SESSION_KEY);
   if (!id) {
@@ -48,6 +56,7 @@ export function ChatApp() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const sessionRef = useRef<string>("");
+  const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -104,18 +113,21 @@ export function ChatApp() {
     }
   }
 
-  async function send(): Promise<void> {
-    const prompt = input.trim();
+  async function send(text?: string): Promise<void> {
+    const prompt = (text ?? input).trim();
     if (!prompt || busy) return;
     setInput("");
     setBusy(true);
     setMessages((m) => [...m, { role: "user", text: prompt }, { role: "agent", text: "", tools: [] }]);
 
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: sessionRef.current, prompt }),
+        signal: ctrl.signal,
       });
       if (!res.ok || !res.body) throw new Error(`request failed: ${res.status}`);
 
@@ -134,13 +146,23 @@ export function ChatApp() {
         }
       }
     } catch (e) {
-      updateAgent((m) => ({ ...m, text: `${m.text}\n\n⚠ ${(e as Error).message}` }));
+      if ((e as Error).name !== "AbortError") {
+        updateAgent((m) => ({ ...m, text: `${m.text}\n\n⚠ ${(e as Error).message}` }));
+      } else {
+        updateAgent((m) => ({ ...m, text: m.text || "_(stopped)_" }));
+      }
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   }
 
+  function stop(): void {
+    abortRef.current?.abort();
+  }
+
   async function reset(): Promise<void> {
+    stop();
     await fetch("/api/agent/reset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -156,78 +178,153 @@ export function ChatApp() {
     }
   }
 
+  const empty = messages.length === 0;
+
   return (
-    <div className="mx-auto flex h-[calc(100vh-2rem)] max-w-3xl flex-col gap-3 p-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Agent Chat</h1>
-        <Button variant="ghost" size="sm" onClick={() => void reset()} disabled={busy}>
-          New session
+    // Sits below the persistent site topbar (~3.5rem); fills the rest of the viewport.
+    <div className="fixed inset-x-0 bottom-0 top-14 z-10 flex flex-col bg-background">
+      {/* Chat sub-bar: context label + new-chat action (site nav lives in the topbar). */}
+      <header className="flex h-11 shrink-0 items-center justify-between border-b px-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="size-2 rounded-full bg-primary" />
+          <span>Agent · this repo</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => void reset()}>
+          <Plus className="size-4" /> New chat
         </Button>
       </header>
 
-      <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border bg-muted/20 p-4">
-        {messages.length === 0 && (
-          <p className="mt-8 text-center text-sm text-muted-foreground">
-            Ask the agent to read, search, edit, or run code in this repo.
-          </p>
-        )}
-
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-            <div
-              className={
-                m.role === "user"
-                  ? "max-w-[80%] rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap"
-                  : "max-w-[85%] space-y-2"
-              }
-            >
-              {m.role === "agent" && m.tools && m.tools.length > 0 && (
-                <div className="space-y-0.5 text-xs text-muted-foreground">
-                  {m.tools.map((t) => (
-                    <div key={t.id} className="flex items-center gap-1.5 font-mono">
-                      <span>
-                        {t.state === "run" ? "⋯" : t.state === "ok" ? "✓" : "✗"} {t.name}
-                      </span>
-                      {t.error && <span className="text-destructive">{t.error}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {m.text && (
-                <div
-                  className={
-                    m.role === "agent"
-                      ? "rounded-lg bg-card px-3 py-2 text-sm whitespace-pre-wrap"
-                      : ""
-                  }
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto">
+        {empty ? (
+          <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-6 px-4">
+            <div className="text-center">
+              <h1 className="text-2xl font-semibold">How can I help?</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                I can read, search, edit, and run code in this repo.
+              </p>
+            </div>
+            <div className="flex w-full flex-col gap-2">
+              {EXAMPLES.map((ex) => (
+                <button
+                  key={ex}
+                  onClick={() => void send(ex)}
+                  className="rounded-xl border bg-card px-4 py-3 text-left text-sm text-card-foreground transition-colors hover:bg-accent"
                 >
-                  {m.text}
-                </div>
-              )}
-              {m.role === "agent" && m.usage && (
-                <div className="text-[10px] text-muted-foreground">
-                  in {m.usage.inputTokens} · out {m.usage.outputTokens} · {m.usage.totalTokens} tok
-                </div>
-              )}
+                  {ex}
+                </button>
+              ))}
             </div>
           </div>
-        ))}
-        <div ref={bottomRef} />
+        ) : (
+          <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
+            {messages.map((m, i) => (
+              <Message key={i} m={m} streaming={busy && i === messages.length - 1} />
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        )}
       </div>
 
-      <div className="flex items-end gap-2">
-        <Textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="Message the agent…  (Enter to send, Shift+Enter for newline)"
-          rows={2}
-          className="resize-none"
-          disabled={busy}
-        />
-        <Button onClick={() => void send()} disabled={busy || !input.trim()}>
-          {busy ? "…" : "Send"}
-        </Button>
+      {/* Composer */}
+      <div className="shrink-0 px-4 pb-4">
+        <div className="mx-auto max-w-3xl">
+          <div className="flex items-end gap-2 rounded-2xl border bg-card p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Message the agent…"
+              rows={1}
+              className="max-h-48 min-h-0 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+            />
+            {busy ? (
+              <Button size="icon" variant="secondary" className="rounded-full" onClick={stop} aria-label="Stop">
+                <Square className="size-4" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                className="rounded-full"
+                onClick={() => void send()}
+                disabled={!input.trim()}
+                aria-label="Send"
+              >
+                <ArrowUp className="size-4" />
+              </Button>
+            )}
+          </div>
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            Enter to send · Shift+Enter for newline
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Message({ m, streaming }: { m: Msg; streaming: boolean }) {
+  if (m.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+          {m.text}
+        </div>
+      </div>
+    );
+  }
+
+  const waiting = streaming && !m.text && !(m.tools && m.tools.length > 0);
+
+  return (
+    <div className="flex gap-3">
+      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+        A
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        {m.tools && m.tools.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {m.tools.map((t) => (
+              <span
+                key={t.id}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-xs",
+                  t.state === "err"
+                    ? "border-destructive/40 text-destructive"
+                    : "text-muted-foreground",
+                )}
+                title={t.error}
+              >
+                {t.state === "run" ? (
+                  <Loader className="size-3 animate-spin" />
+                ) : t.state === "ok" ? (
+                  <Check className="size-3 text-primary" />
+                ) : (
+                  <X className="size-3" />
+                )}
+                {t.name}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {waiting ? (
+          <div className="flex gap-1 py-2">
+            <span className="size-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.3s]" />
+            <span className="size-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:-0.15s]" />
+            <span className="size-2 animate-bounce rounded-full bg-muted-foreground/50" />
+          </div>
+        ) : (
+          m.text && (
+            <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{m.text}</div>
+          )
+        )}
+
+        {m.usage && (
+          <div className="text-[10px] text-muted-foreground">
+            in {m.usage.inputTokens} · out {m.usage.outputTokens} · {m.usage.totalTokens} tok
+          </div>
+        )}
       </div>
     </div>
   );

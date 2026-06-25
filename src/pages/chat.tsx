@@ -7,9 +7,5 @@ import { ChatApp } from "../ChatApp";
  * and all chat state lives in the browser. No depth-0 data (`loadData` returns null).
  */
 export default function Chat(_props: { data: unknown }) {
-  return (
-    <div className="relative z-10">
-      <Island name="chat" props={{}} of={ChatApp} />
-    </div>
-  );
+  return <Island name="chat" props={{}} of={ChatApp} />;
 }

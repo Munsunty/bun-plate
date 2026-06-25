@@ -9,7 +9,8 @@ import type { ReactNode } from "react";
  */
 
 const NAV = [
-  { href: "/", label: "Dashboard" },
+  { href: "/", label: "Chat" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/home", label: "Home" },
   { href: "/todos", label: "Todos" },
   { href: "/admin", label: "Admin" },
@@ -19,8 +20,8 @@ const NAV = [
 export function Shell({ children }: { children: ReactNode }) {
   return (
     <>
-      <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
-        <nav className="container mx-auto flex items-center gap-4 p-4">
+      <header className="absolute w-full top-0 left-0 right-0 z-20 border-b bg-background/80 backdrop-blur">
+        <nav className=" mx-auto flex items-center gap-4 p-4">
           <span className="font-bold">bun-plate</span>
           {NAV.map((item) => (
             <a key={item.href} href={item.href} className="text-sm text-muted-foreground hover:text-foreground">
