@@ -8,6 +8,7 @@ import type { ComponentType } from "react";
  * (they also SSR them); the names here must match `<Island name=...>` markers.
  */
 export const islands: Record<string, () => Promise<ComponentType<any>>> = {
+  chat: () => import("../ChatApp").then((m) => m.ChatApp),
   todos: () => import("../Todos").then((m) => m.Todos),
   "api-tester": () => import("../APITester").then((m) => m.APITester),
   "sales-chart": () => import("../SalesChart").then((m) => m.SalesChart),

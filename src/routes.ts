@@ -29,7 +29,8 @@ export interface RouteMeta {
 }
 
 export const routes: RouteMeta[] = [
-  { name: "dashboard", pattern: "/", transition: "light", interactive: true },
+  { name: "chat", pattern: "/", transition: "light", interactive: true },
+  { name: "dashboard", pattern: "/dashboard", transition: "light", interactive: true },
   { name: "home", pattern: "/home", transition: "light", interactive: true },
   { name: "todos", pattern: "/todos", transition: "light", interactive: true },
   // Admin is a separate context → heavy (full browser navigation), still has islands.

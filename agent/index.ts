@@ -39,3 +39,7 @@ export type { ExperienceBlock, History, IdentityBlock, TaskBlock } from "./layer
 export type { AgentEvent } from "./layer3/events";
 export { run } from "./layer3/loop";
 export type { RunConfig } from "./layer3/loop";
+
+// Runtime wiring (providers + registry + system prompt) for CLI / import / sidecar.
+export { createAgentRuntime } from "./runtime";
+export type { AgentRuntime } from "./runtime";

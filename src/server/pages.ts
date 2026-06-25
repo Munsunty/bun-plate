@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import * as todosService from "../services/todos.service";
 import * as dashboardService from "../services/dashboard.service";
+import Chat from "../pages/chat";
 import Home from "../pages/home";
 import TodosPage from "../pages/todos-page";
 import Dashboard from "../pages/dashboard";
@@ -26,6 +27,7 @@ export interface ServerPage {
 const loadTodos = async () => todosService.list();
 
 export const serverPages: Record<string, ServerPage> = {
+  chat: { Component: Chat, loadData: async () => null },
   home: { Component: Home, loadData: loadTodos },
   todos: { Component: TodosPage, loadData: loadTodos },
   dashboard: {
