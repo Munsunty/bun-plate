@@ -1,11 +1,12 @@
 /**
- * Public surface of the layered agent harness.
+ * Public surface of the layered agent harness (L1–L3, non-streaming).
  *
- *   L1  client + IO providers   (raw openai SDK → custom router)
+ *   L1  client + IO providers   (single OpenAI-compatible client → custom router)
  *   L2  tool SSOT + dispatcher   (Zod is the single source of truth)
  *   L3  stateless loop + 3-block history assembler
- *   L4  compaction = experience distillation
- *   L5  subagent spawn through the depth/budget/concurrency limiter
+ *
+ * L4 (compaction) and L5 (subagent spawn) exist under layer4/ and layer5/ but are
+ * not wired into this surface yet.
  */
 
 // L1
@@ -24,8 +25,8 @@ export type {
 // L2
 export { defineTool, toOpenAITool, toOpenAITools } from "./layer2/tool";
 export type { ToolContext, ToolDef, ToolRegistry } from "./layer2/tool";
-export { dispatchToolCall, dispatchToolCalls } from "./layer2/dispatch";
-export type { ApproveFn, DispatchDeps } from "./layer2/dispatch";
+export { dispatchToolCall } from "./layer2/dispatch";
+export type { ApproveFn, DispatchDeps, DispatchResult } from "./layer2/dispatch";
 export { ToolArgValidationError, ToolDeniedError, ToolExecutionError } from "./layer2/errors";
 export { createFsTools } from "./layer2/tools/fs.tools";
 export { createBashTool } from "./layer2/tools/shell.tools";
@@ -36,22 +37,5 @@ export type { McpServerConfig, McpToolSource } from "./layer2/mcp/seam";
 export { assemble, emptyHistory } from "./layer3/blocks";
 export type { ExperienceBlock, History, IdentityBlock, TaskBlock } from "./layer3/blocks";
 export type { AgentEvent } from "./layer3/events";
-export { accumulateStream } from "./layer3/stream";
 export { run } from "./layer3/loop";
 export type { RunConfig } from "./layer3/loop";
-
-// L4
-export {
-  defaultEstimateTokens,
-  distill,
-  estimateHistoryTokens,
-  shouldCompact,
-} from "./layer4/compaction";
-export type { CompactionConfig } from "./layer4/compaction";
-
-// L5
-export { forkChild, rootControl, withSlot } from "./layer5/control";
-export type { ControlContext } from "./layer5/control";
-export { StaticCatalog } from "./layer5/catalog";
-export type { SubagentCatalog, SubagentDef } from "./layer5/catalog";
-export { createSpawnTool } from "./layer5/spawn.tool";

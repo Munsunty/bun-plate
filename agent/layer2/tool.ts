@@ -1,7 +1,5 @@
 import { z } from "zod";
 import type { ChatCompletionFunctionTool } from "openai/resources/chat/completions";
-import type { ControlContext } from "../layer5/control";
-import type { AgentEvent } from "../layer3/events";
 
 /**
  * Layer 2 — the SSOT (single source of truth). One Zod schema per tool yields all
@@ -14,10 +12,6 @@ import type { AgentEvent } from "../layer3/events";
 /** Threaded into every tool's execute. */
 export interface ToolContext {
   signal?: AbortSignal;
-  /** L5 limits — read by the `task` spawn tool to fork a bounded child. */
-  control: ControlContext;
-  /** Lets streaming tools (e.g. subagent spawn) bubble events to the parent loop. */
-  emit?: (event: AgentEvent) => void;
 }
 
 /**
@@ -30,13 +24,6 @@ export interface ToolDef {
   description: string;
   parameters: z.ZodType;
   execute: (args: any, ctx: ToolContext) => Promise<unknown>;
-  /**
-   * If true, the dispatcher does NOT hold a concurrency slot for this tool's whole
-   * execution. Set for orchestration tools (e.g. `task` spawn) that mostly *wait* on
-   * child work: holding a slot while the child's own tools need slots would deadlock.
-   * Concurrency then bounds only real leaf work, never the waiting orchestrator.
-   */
-  concurrencyExempt?: boolean;
 }
 
 export type ToolRegistry = Record<string, ToolDef>;
@@ -50,7 +37,6 @@ export function defineTool<S extends z.ZodType, R>(def: {
   description: string;
   parameters: S;
   execute: (args: z.infer<S>, ctx: ToolContext) => Promise<R>;
-  concurrencyExempt?: boolean;
 }): ToolDef {
   return def as ToolDef;
 }

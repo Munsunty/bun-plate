@@ -3,11 +3,9 @@ import type {
   ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions";
 import type { z } from "zod";
-import type { AgentEvent } from "../layer3/events";
-import { withSlot } from "../layer5/control";
 import type { ToolContext, ToolRegistry } from "./tool";
 
-/** L5 gate chokepoint. Default-allow when unset. */
+/** Approval gate chokepoint. Default-allow when unset. */
 export type ApproveFn = (info: {
   toolName: string;
   toolCallId: string;
@@ -18,7 +16,18 @@ export interface DispatchDeps {
   registry: ToolRegistry;
   ctx: ToolContext;
   approve?: ApproveFn;
-  emit: (e: AgentEvent) => void;
+}
+
+/**
+ * Outcome of one tool call. `message` is always the `role:"tool"` result to push
+ * into history; `ok`/`error` let the loop decide whether to emit tool.done or
+ * tool.error. Validation failures, denials, and thrown errors are all rendered as
+ * tool results (never thrown to the loop) so the model can self-correct next step.
+ */
+export interface DispatchResult {
+  message: ChatCompletionToolMessageParam;
+  ok: boolean;
+  error?: string;
 }
 
 function formatZodError(err: z.ZodError): string {
@@ -39,33 +48,33 @@ function toolMessage(
   };
 }
 
+function fail(toolCallId: string, error: string): DispatchResult {
+  return { message: toolMessage(toolCallId, { error }), ok: false, error };
+}
+
 /**
- * One assistant tool_call → exactly one tool result message. Validation failures,
- * denials, and thrown errors are all rendered as tool results (never thrown to the
- * loop) so the model can self-correct on the next step.
+ * One assistant tool_call → exactly one tool result message. Pure: no events, no
+ * concurrency slot. The caller (loop) emits lifecycle events around this.
  */
 export async function dispatchToolCall(
   call: ChatCompletionMessageToolCall,
   deps: DispatchDeps,
-): Promise<ChatCompletionToolMessageParam> {
-  const { registry, ctx, approve, emit } = deps;
+): Promise<DispatchResult> {
+  const { registry, ctx, approve } = deps;
   const toolCallId = call.id;
 
   // Custom (non-function) tool calls are unsupported by this runtime.
   if (call.type !== "function") {
-    const error = `Unsupported tool call type: ${call.type}`;
-    emit({ type: "tool.error", toolName: "(unknown)", toolCallId, error });
-    return toolMessage(toolCallId, { error });
+    return fail(toolCallId, `Unsupported tool call type: ${call.type}`);
   }
 
   const toolName = call.function.name;
-  emit({ type: "tool.start", toolName, toolCallId });
-
   const def = registry[toolName];
   if (!def) {
-    const error = `Unknown tool: ${toolName}. Available: ${Object.keys(registry).join(", ")}`;
-    emit({ type: "tool.error", toolName, toolCallId, error });
-    return toolMessage(toolCallId, { error });
+    return fail(
+      toolCallId,
+      `Unknown tool: ${toolName}. Available: ${Object.keys(registry).join(", ")}`,
+    );
   }
 
   // Parse the JSON-string arguments the model produced.
@@ -73,52 +82,25 @@ export async function dispatchToolCall(
   try {
     raw = call.function.arguments ? JSON.parse(call.function.arguments) : {};
   } catch (e) {
-    const error = `Arguments are not valid JSON: ${(e as Error).message}`;
-    emit({ type: "tool.error", toolName, toolCallId, error });
-    return toolMessage(toolCallId, { error });
+    return fail(toolCallId, `Arguments are not valid JSON: ${(e as Error).message}`);
   }
 
   // Runtime validation against the SSOT schema → feed failures back to the model.
   const parsed = def.parameters.safeParse(raw);
   if (!parsed.success) {
-    const error = `Invalid arguments: ${formatZodError(parsed.error)}`;
-    emit({ type: "tool.error", toolName, toolCallId, error });
-    return toolMessage(toolCallId, { error });
+    return fail(toolCallId, `Invalid arguments: ${formatZodError(parsed.error)}`);
   }
 
-  // L5 approval gate.
+  // Approval gate.
   if (approve) {
     const allowed = await approve({ toolName, toolCallId, input: parsed.data });
-    if (!allowed) {
-      const error = `Denied by policy: ${toolName}`;
-      emit({ type: "tool.error", toolName, toolCallId, error });
-      return toolMessage(toolCallId, { error });
-    }
+    if (!allowed) return fail(toolCallId, `Denied by policy: ${toolName}`);
   }
 
-  // Execute through the concurrency limiter. Orchestration tools (spawn) are
-  // exempt: they mostly wait on child work, and holding a slot while the child's
-  // own tools need slots would deadlock. Concurrency bounds real leaf work only.
   try {
-    const result = def.concurrencyExempt
-      ? await def.execute(parsed.data, ctx)
-      : await withSlot(ctx.control, () => def.execute(parsed.data, ctx));
-    emit({ type: "tool.done", toolName, toolCallId });
-    return toolMessage(toolCallId, result);
+    const result = await def.execute(parsed.data, ctx);
+    return { message: toolMessage(toolCallId, result), ok: true };
   } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
-    emit({ type: "tool.error", toolName, toolCallId, error });
-    return toolMessage(toolCallId, { error });
+    return fail(toolCallId, e instanceof Error ? e.message : String(e));
   }
-}
-
-/**
- * Fan out over `message.tool_calls`. Order is preserved (matching tool_call_ids);
- * actual parallelism is bounded by the limiter's concurrency cap inside each call.
- */
-export async function dispatchToolCalls(
-  calls: ChatCompletionMessageToolCall[],
-  deps: DispatchDeps,
-): Promise<ChatCompletionToolMessageParam[]> {
-  return Promise.all(calls.map((c) => dispatchToolCall(c, deps)));
 }
